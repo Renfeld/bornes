@@ -20,8 +20,7 @@
       height: 100%;
       margin: 0;
     }
-
-    /* Amélioration accessibilité : contour visible quand le marqueur a le focus */
+    /* Focus visible sur marqueurs */
     .leaflet-marker-icon:focus {
       outline: 2px solid #000;
     }
@@ -36,80 +35,85 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <script type="module">
-    /* Enregistrement du Service Worker pour le mode hors-ligne */
+    /* Service Worker */
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('service-worker.js').catch(console.error);
     }
 
-    /* --- Initialisation de la carte --- */
+    /* Carte */
     const map = L.map('map').setView([46.5, 2.5], 6);
-
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '© OpenStreetMap contributors, © CARTO',
       maxZoom: 19
     }).addTo(map);
 
-    /* Groupe de clusters */
+    /* Cluster */
     const clusters = L.markerClusterGroup({ disableClusteringAtZoom: 10 });
     map.addLayer(clusters);
 
-    /* --- Requête API tabulaire data.gouv.fr --- */
-    const RID = 'eb76d20a-8501-400e-b336-d85724de5435'; // UUID du fichier CSV consolidé IRVE (11/06/2025)
+    /* API Tabulaire */
+    const RID = 'eb76d20a-8501-400e-b336-d85724de5435'; // IRVE consolidé 11/06/2025
     const PAGE_SIZE = 1000;
-    const BASE_URL = `https://tabular-api.data.gouv.fr/api/resources/${RID}/data/`;
-
+    const BASE = `https://tabular-api.data.gouv.fr/api/resources/${RID}/data/`;
     const params = new URLSearchParams({
       page_size: PAGE_SIZE,
-      consolidated_is_lon_lat_correct__exact: true
+      consolidated_is_lon_lat_correct__exact: 1 // 1 = true ; 0 = false
     });
 
-    (async function streamIRVE() {
+    (async function fetchIRVE() {
       let page = 1;
-      while (true) {
-        try {
-          const response = await fetch(`${BASE_URL}?${params}&page=${page}`);
-          if (!response.ok) {
-            console.error('Erreur HTTP', response.status);
+      try {
+        while (true) {
+          const url = `${BASE}?${params}&page=${page}`;
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            console.error('HTTP', resp.status, resp.statusText);
+            if (resp.status === 400 && page === 1) {
+              console.warn('Tentative sans filtre qualité…');
+              return fallbackFetch();
+            }
             break;
           }
-          const json = await response.json();
+          const json = await resp.json();
           json.data.forEach(addMarker);
-          if (!json.links?.next) {
-            console.info('Dernière page atteinte');
-            break;
-          }
+          if (!json.links?.next) break;
           page++;
-        } catch (err) {
-          console.error('Erreur API IRVE', err);
-          break;
         }
+      } catch (e) {
+        console.error('IRVE fetch error', e);
       }
     })();
 
-    /* Création des marqueurs */
+    /* Fallback sans filtre qualité si la requête 400 persiste */
+    async function fallbackFetch() {
+      const altParams = new URLSearchParams({ page_size: PAGE_SIZE });
+      let page = 1;
+      while (true) {
+        const url = `${BASE}?${altParams}&page=${page}`;
+        const resp = await fetch(url);
+        if (!resp.ok) break;
+        const json = await resp.json();
+        json.data.forEach(addMarker);
+        if (!json.links?.next) break;
+        page++;
+      }
+    }
+
     function addMarker(row) {
-      // Certains millésimes portent les clés "latitude"/"longitude" plutôt que "consolidated_latitude".
-      const lat = parseFloat(row.consolidated_latitude || row.latitude);
-      const lon = parseFloat(row.consolidated_longitude || row.longitude);
+      const lat = parseFloat(row.consolidated_latitude ?? row.latitude);
+      const lon = parseFloat(row.consolidated_longitude ?? row.longitude);
       if (!isFinite(lat) || !isFinite(lon)) return;
 
-      const popupHTML = `
-        <strong>${row.nom_station || 'Station sans nom'}</strong><br>
-        ${(row.puissance_nominale ? `${row.puissance_nominale} kW` : 'Puissance NC')} · ${(row.horaires || 'Horaires NC')}<br>
+      const popup = `
+        <strong>${row.nom_station || 'Station IRVE'}</strong><br>
+        ${(row.puissance_nominale ? row.puissance_nominale + ' kW' : 'Puissance NC')} · ${(row.horaires || 'Horaires NC')}<br>
         ${row.tarification || 'Tarif NC'}
       `;
 
-      const marker = L.marker([lat, lon], {
-        title: row.nom_station || 'Station IRVE'
-      }).bindPopup(popupHTML, { autoFocus: false });
-
-      // Accessibilité : focus automatique sur le titre à l’ouverture
-      marker.on('popupopen', e => {
-        const el = e.popup.getElement();
-        el.querySelector('strong')?.focus();
-      });
-
-      clusters.addLayer(marker);
+      L.marker([lat, lon], { title: row.nom_station || 'Station IRVE' })
+        .bindPopup(popup, { autoFocus: false })
+        .on('popupopen', e => e.popup.getElement().querySelector('strong')?.focus())
+        .addTo(clusters);
     }
   </script>
 </body>
