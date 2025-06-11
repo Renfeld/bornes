@@ -1,60 +1,108 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Bornes de recharge</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bornes de recharge – IRVE live</title>
 
-  <!-- PWA -->
-  <link rel="manifest" href="manifest.webmanifest">
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.webmanifest" />
 
-  <!-- Leaflet & clustering -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <style>html,body,#map{height:100%;margin:0}</style>
+  <!-- Leaflet & clustering CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+  <style>
+    html,
+    body,
+    #map {
+      height: 100%;
+      margin: 0;
+    }
+
+    /* Amélioration accessibilité : contour visible quand le marqueur a le focus */
+    .leaflet-marker-icon:focus {
+      outline: 2px solid #000;
+    }
+  </style>
 </head>
 <body>
-  <noscript>Activez JavaScript pour voir la carte.</noscript>
   <div id="map" role="region" aria-label="Carte des bornes de recharge"></div>
 
+  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <!-- MarkerCluster JS -->
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-  <script>
-    /* Enregistrement PWA */
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('service-worker.js');
 
-    /* Carte */
+  <script type="module">
+    /* Enregistrement du Service Worker pour le mode hors‑ligne */
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('service-worker.js').catch(console.error);
+    }
+
+    /* --- Initialisation de la carte --- */
     const map = L.map('map').setView([46.5, 2.5], 6);
+
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '© OpenStreetMap contributors, © CARTO',
       maxZoom: 19
     }).addTo(map);
 
-    /* Cluster */
+    /* Groupe de clusters */
     const clusters = L.markerClusterGroup({ disableClusteringAtZoom: 10 });
+    map.addLayer(clusters);
 
-    fetch('data/points.json')
-      .then(r => r.json())
-      .then(({ bornes }) => {
-        bornes.forEach(b => {
-          const [lon, lat] = b.coordonneesXY;
-          const m = L.marker([lat, lon], { title: b.nom_station });
-          m.bindPopup(`
-            <strong>${b.nom_station}</strong><br>
-            ${b.puissance_nominale} kW · ${b.horaires}<br>
-            ${b.tarification}
-          `, { autoFocus: false });
-          m.on('popupopen', e => {
-            const el = e.popup.getElement();
-            el.querySelector('strong')?.focus();               // focus trap
-          });
-          clusters.addLayer(m);
-        });
-        map.addLayer(clusters);
-      })
-      .catch(console.error);
+    /* --- Requête API tabulaire data.gouv.fr --- */
+    const RID = 'eb76d20a-8501-400e-b336-d85724de5435'; // UUID du fichier CSV consolidé IRVE (11/06/2025)
+    const PAGE_SIZE = 1000;
+    const BASE_URL = `https://tabular-api.data.gouv.fr/api/resources/${RID}/data/`;
+
+    const params = new URLSearchParams({
+      page_size: PAGE_SIZE,
+      consolidated_is_lon_lat_correct__exact: true
+    });
+
+    (async function streamIRVE() {
+      let page = 1;
+      while (true) {
+        try {
+          const response = await fetch(`${BASE_URL}?${params}&page=${page}`);
+          if (!response.ok) break;
+          const json = await response.json();
+          json.data.forEach(addMarker);
+          if (!json.links?.next) break;
+          page++;
+        } catch (err) {
+          console.error('Erreur API IRVE', err);
+          break;
+        }
+      }
+    })();
+
+    /* Création des marqueurs */
+    function addMarker(row) {
+      const lat = parseFloat(row.consolidated_latitude);
+      const lon = parseFloat(row.consolidated_longitude);
+      if (!isFinite(lat) || !isFinite(lon)) return;
+
+      const popupHTML = `
+        <strong>${row.nom_station || 'Station sans nom'}</strong><br>
+        ${(row.puissance_nominale ? `${row.puissance_nominale} kW` : 'Puissance NC')} · ${(row.horaires || 'Horaires NC')}<br>
+        ${row.tarification || 'Tarif NC'}
+      `;
+
+      const marker = L.marker([lat, lon], {
+        title: row.nom_station || 'Station IRVE'
+      }).bindPopup(popupHTML, { autoFocus: false });
+
+      // Accessibilité : focus automatique sur le titre à l’ouverture
+      marker.on('popupopen', e => {
+        const el = e.popup.getElement();
+        el.querySelector('strong')?.focus();
+      });
+
+      clusters.addLayer(marker);
+    }
   </script>
 </body>
 </html>
