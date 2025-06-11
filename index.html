@@ -9,111 +9,67 @@
   <link rel="manifest" href="manifest.webmanifest" />
 
   <!-- Leaflet & clustering CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 
   <style>
-    html,
-    body,
-    #map {
-      height: 100%;
-      margin: 0;
-    }
-    /* Focus visible sur marqueurs */
-    .leaflet-marker-icon:focus {
-      outline: 2px solid #000;
-    }
+    html,body,#map{height:100%;margin:0}
+    .leaflet-marker-icon:focus{outline:2px solid #000}
   </style>
 </head>
 <body>
   <div id="map" role="region" aria-label="Carte des bornes de recharge"></div>
 
   <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
   <!-- MarkerCluster JS -->
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <script type="module">
-    /* Service Worker */
+    /* Service‑worker pour le mode offline */
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('service-worker.js').catch(console.error);
     }
 
-    /* Carte */
-    const map = L.map('map').setView([46.5, 2.5], 6);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '© OpenStreetMap contributors, © CARTO',
-      maxZoom: 19
-    }).addTo(map);
+    /* --- Carte Leaflet --- */
+    const map=L.map('map').setView([46.5,2.5],6);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{
+      attribution:'© OpenStreetMap contributors, © CARTO',maxZoom:19}).addTo(map);
 
-    /* Cluster */
-    const clusters = L.markerClusterGroup({ disableClusteringAtZoom: 10 });
+    const clusters=L.markerClusterGroup({disableClusteringAtZoom:10});
     map.addLayer(clusters);
 
-    /* API Tabulaire */
-    const RID = 'eb76d20a-8501-400e-b336-d85724de5435'; // IRVE consolidé 11/06/2025
-    const PAGE_SIZE = 1000;
-    const BASE = `https://tabular-api.data.gouv.fr/api/resources/${RID}/data/`;
-    const params = new URLSearchParams({
-      page_size: PAGE_SIZE,
-      consolidated_is_lon_lat_correct__exact: 1 // 1 = true ; 0 = false
-    });
+    /* --- Appel API Tabulaire --- */
+    const RID='eb76d20a-8501-400e-b336-d85724de5435';
+    const PAGE_SIZE=500; // la limite pratique du backend est 500
+    const BASE=`https://tabular-api.data.gouv.fr/api/resources/${RID}/data/`;
 
-    (async function fetchIRVE() {
-      let page = 1;
-      try {
-        while (true) {
-          const url = `${BASE}?${params}&page=${page}`;
-          const resp = await fetch(url);
-          if (!resp.ok) {
-            console.error('HTTP', resp.status, resp.statusText);
-            if (resp.status === 400 && page === 1) {
-              console.warn('Tentative sans filtre qualité…');
-              return fallbackFetch();
-            }
-            break;
-          }
-          const json = await resp.json();
-          json.data.forEach(addMarker);
-          if (!json.links?.next) break;
-          page++;
+    (async()=>{
+      let page=1;
+      while(true){
+        const qs=new URLSearchParams({page_size:PAGE_SIZE,page});
+        const url=`${BASE}?${qs}`;
+        let resp;
+        try{resp=await fetch(url);}catch(e){console.error('Network error',e);break;}
+        if(!resp.ok){
+          console.error('API 400/404/5xx',resp.status,resp.statusText,url);
+          break;
         }
-      } catch (e) {
-        console.error('IRVE fetch error', e);
+        const json=await resp.json();
+        json.data.forEach(addMarker);
+        if(!json.links?.next)break;
+        page++;
       }
     })();
 
-    /* Fallback sans filtre qualité si la requête 400 persiste */
-    async function fallbackFetch() {
-      const altParams = new URLSearchParams({ page_size: PAGE_SIZE });
-      let page = 1;
-      while (true) {
-        const url = `${BASE}?${altParams}&page=${page}`;
-        const resp = await fetch(url);
-        if (!resp.ok) break;
-        const json = await resp.json();
-        json.data.forEach(addMarker);
-        if (!json.links?.next) break;
-        page++;
-      }
-    }
-
-    function addMarker(row) {
-      const lat = parseFloat(row.consolidated_latitude ?? row.latitude);
-      const lon = parseFloat(row.consolidated_longitude ?? row.longitude);
-      if (!isFinite(lat) || !isFinite(lon)) return;
-
-      const popup = `
-        <strong>${row.nom_station || 'Station IRVE'}</strong><br>
-        ${(row.puissance_nominale ? row.puissance_nominale + ' kW' : 'Puissance NC')} · ${(row.horaires || 'Horaires NC')}<br>
-        ${row.tarification || 'Tarif NC'}
-      `;
-
-      L.marker([lat, lon], { title: row.nom_station || 'Station IRVE' })
-        .bindPopup(popup, { autoFocus: false })
-        .on('popupopen', e => e.popup.getElement().querySelector('strong')?.focus())
-        .addTo(clusters);
+    /* --- Création des marqueurs --- */
+    function addMarker(r){
+      const lat=parseFloat(r.consolidated_latitude??r.latitude);
+      const lon=parseFloat(r.consolidated_longitude??r.longitude);
+      if(!isFinite(lat)||!isFinite(lon))return;
+      const popup=`<strong>${r.nom_station||'Station'}</strong><br>${r.puissance_nominale||'–'} kW · ${r.horaires||'–'}<br>${r.tarification||'Tarif NC'}`;
+      L.marker([lat,lon],{title:r.nom_station||'Station'}).bindPopup(popup,{autoFocus:false}).on('popupopen',e=>e.popup.getElement().querySelector('strong')?.focus()).addTo(clusters);
     }
   </script>
 </body>
