@@ -1,0 +1,60 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Bornes de recharge</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+
+  <!-- Leaflet & clustering -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+  <style>html,body,#map{height:100%;margin:0}</style>
+</head>
+<body>
+  <noscript>Activez JavaScript pour voir la carte.</noscript>
+  <div id="map" role="region" aria-label="Carte des bornes de recharge"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script>
+    /* Enregistrement PWA */
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('service-worker.js');
+
+    /* Carte */
+    const map = L.map('map').setView([46.5, 2.5], 6);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap contributors, © CARTO',
+      maxZoom: 19
+    }).addTo(map);
+
+    /* Cluster */
+    const clusters = L.markerClusterGroup({ disableClusteringAtZoom: 10 });
+
+    fetch('data/points.json')
+      .then(r => r.json())
+      .then(({ bornes }) => {
+        bornes.forEach(b => {
+          const [lon, lat] = b.coordonneesXY;
+          const m = L.marker([lat, lon], { title: b.nom_station });
+          m.bindPopup(`
+            <strong>${b.nom_station}</strong><br>
+            ${b.puissance_nominale} kW · ${b.horaires}<br>
+            ${b.tarification}
+          `, { autoFocus: false });
+          m.on('popupopen', e => {
+            const el = e.popup.getElement();
+            el.querySelector('strong')?.focus();               // focus trap
+          });
+          clusters.addLayer(m);
+        });
+        map.addLayer(clusters);
+      })
+      .catch(console.error);
+  </script>
+</body>
+</html>
