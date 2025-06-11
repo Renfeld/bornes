@@ -10,6 +10,7 @@
 
   <!-- Leaflet & clustering CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 
   <style>
@@ -35,7 +36,7 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <script type="module">
-    /* Enregistrement du Service Worker pour le mode hors‑ligne */
+    /* Enregistrement du Service Worker pour le mode hors-ligne */
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('service-worker.js').catch(console.error);
     }
@@ -67,10 +68,16 @@
       while (true) {
         try {
           const response = await fetch(`${BASE_URL}?${params}&page=${page}`);
-          if (!response.ok) break;
+          if (!response.ok) {
+            console.error('Erreur HTTP', response.status);
+            break;
+          }
           const json = await response.json();
           json.data.forEach(addMarker);
-          if (!json.links?.next) break;
+          if (!json.links?.next) {
+            console.info('Dernière page atteinte');
+            break;
+          }
           page++;
         } catch (err) {
           console.error('Erreur API IRVE', err);
@@ -81,13 +88,14 @@
 
     /* Création des marqueurs */
     function addMarker(row) {
-      const lat = parseFloat(row.consolidated_latitude);
-      const lon = parseFloat(row.consolidated_longitude);
+      // Certains millésimes portent les clés "latitude"/"longitude" plutôt que "consolidated_latitude".
+      const lat = parseFloat(row.consolidated_latitude || row.latitude);
+      const lon = parseFloat(row.consolidated_longitude || row.longitude);
       if (!isFinite(lat) || !isFinite(lon)) return;
 
       const popupHTML = `
         <strong>${row.nom_station || 'Station sans nom'}</strong><br>
-        ${(row.puissance_nominale ? `${row.puissance_nominale} kW` : 'Puissance NC')} · ${(row.horaires || 'Horaires NC')}<br>
+        ${(row.puissance_nominale ? `${row.puissance_nominale} kW` : 'Puissance NC')} · ${(row.horaires || 'Horaires NC')}<br>
         ${row.tarification || 'Tarif NC'}
       `;
 
@@ -95,7 +103,7 @@
         title: row.nom_station || 'Station IRVE'
       }).bindPopup(popupHTML, { autoFocus: false });
 
-      // Accessibilité : focus automatique sur le titre à l’ouverture
+      // Accessibilité : focus automatique sur le titre à l’ouverture
       marker.on('popupopen', e => {
         const el = e.popup.getElement();
         el.querySelector('strong')?.focus();
