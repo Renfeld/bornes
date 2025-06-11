@@ -27,12 +27,12 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
   <script type="module">
-    /* Service‑worker pour le mode offline */
+    /* Service‑worker */
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('service-worker.js').catch(console.error);
+      navigator.serviceWorker.register('service-worker.js');
     }
 
-    /* --- Carte Leaflet --- */
+    /* --- Carte --- */
     const map=L.map('map').setView([46.5,2.5],6);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{
       attribution:'© OpenStreetMap contributors, © CARTO',maxZoom:19}).addTo(map);
@@ -40,35 +40,34 @@
     const clusters=L.markerClusterGroup({disableClusteringAtZoom:10});
     map.addLayer(clusters);
 
-    /* --- Appel API Tabulaire --- */
+    /* --- API tabulaire --- */
     const RID='eb76d20a-8501-400e-b336-d85724de5435';
-    const PAGE_SIZE=500; // la limite pratique du backend est 500
+    const PAGE_SIZE=100; // valeur sûre acceptée par l’API
     const BASE=`https://tabular-api.data.gouv.fr/api/resources/${RID}/data/`;
 
-    (async()=>{
-      let page=1;
-      while(true){
-        const qs=new URLSearchParams({page_size:PAGE_SIZE,page});
-        const url=`${BASE}?${qs}`;
-        let resp;
-        try{resp=await fetch(url);}catch(e){console.error('Network error',e);break;}
+    paginate();
+
+    async function paginate(page=1){
+      const url=`${BASE}?page_size=${PAGE_SIZE}&page=${page}`;
+      try{
+        const resp=await fetch(url);
         if(!resp.ok){
-          console.error('API 400/404/5xx',resp.status,resp.statusText,url);
-          break;
+          console.error('HTTP',resp.status,resp.statusText,url);
+          return;
         }
         const json=await resp.json();
         json.data.forEach(addMarker);
-        if(!json.links?.next)break;
-        page++;
-      }
-    })();
+        if(json.links?.next){
+          paginate(page+1);
+        }
+      }catch(e){console.error('Network/API error',e);}  
+    }
 
-    /* --- Création des marqueurs --- */
     function addMarker(r){
-      const lat=parseFloat(r.consolidated_latitude??r.latitude);
-      const lon=parseFloat(r.consolidated_longitude??r.longitude);
+      const lat=parseFloat(r.consolidated_latitude||r.latitude);
+      const lon=parseFloat(r.consolidated_longitude||r.longitude);
       if(!isFinite(lat)||!isFinite(lon))return;
-      const popup=`<strong>${r.nom_station||'Station'}</strong><br>${r.puissance_nominale||'–'} kW · ${r.horaires||'–'}<br>${r.tarification||'Tarif NC'}`;
+      const popup=`<strong>${r.nom_station||'Station'}</strong><br>${r.puissance_nominale||'–'} kW · ${r.horaires||'–'}<br>${r.tarification||'NC'}`;
       L.marker([lat,lon],{title:r.nom_station||'Station'}).bindPopup(popup,{autoFocus:false}).on('popupopen',e=>e.popup.getElement().querySelector('strong')?.focus()).addTo(clusters);
     }
   </script>
